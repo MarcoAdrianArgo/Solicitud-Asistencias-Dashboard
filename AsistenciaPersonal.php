@@ -1,3 +1,4 @@
+
 <?php
 /**
 * © Argo Almacenadora ®
@@ -21,11 +22,26 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 // Verificar si 'iidPlaza' está presente en los datos POST
                 if (isset($_POST['iidPlaza'])) {
                     $iidPlaza = $_POST['iidPlaza'];
+                    //$fecha = isset($_POST['fecha']) ? $_POST['fecha'] : null;
+                    $fecha = $_POST['fecha'];
 
+                    $fechaInicio = $_POST['fechaInicio'];
+                    $fechaFin = $_POST['fechaFin'];
                     // Crear una instancia de la clase
                     $instancia = new $clase();
                     // Llamar al método y pasar 'iidPlaza' como argumento
-                    $datos = $instancia->$metodo($iidPlaza);
+
+              
+                    if (!empty($fechaInicio) && !empty($fechaFin)) {
+                        // Modo rango de fechas (semana/mes)
+                        $datos = $instancia->$metodo($iidPlaza, null, $fechaInicio, $fechaFin);
+                    } elseif (!empty($fecha)) {
+                        // Modo fecha específica (día)
+                        $datos = $instancia->$metodo($iidPlaza, $fecha);
+                    } else {
+                        // Sin fecha (hoy)
+                        $datos = $instancia->$metodo($iidPlaza);
+                    }
 
                     // Devolver los datos como respuesta AJAX
                     echo json_encode($datos);
@@ -44,11 +60,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 }
 
 
-class AsistenciaPersonal
-{
+class AsistenciaPersonal{
 	/*######################## TABLA DE EMPLEADOS #########################*/
-	public function plazasActivas()
-	{
+	public function plazasActivas()	{
 		$conn = conexion::conectar();
 		$res_array = array();
 
@@ -69,10 +83,167 @@ class AsistenciaPersonal
 		return $res_array;
 	}
 
-    public function obtenerAsistencia($iid_plaza){
-        $conn = conexion::conectar();
-        $res_array = array();
+  public function obtenerAsistencia($iid_plaza, $fecha = null, $fechaInicio = null, $fechaFin = null) {   
+    $conn = conexion::conectar();
+    $res_array = array();
 
+    // $fecha = '2025-12-10'; 
+    // $fechaInicio = '2025-12-22'; 
+    // $fechaFin = '2025-12-27'; 
+    
+    $modo_rango = ($fechaInicio && $fechaFin);
+
+    if ($modo_rango) {
+        // Modo rango de fechas
+        $fecha_sql_inicio = "TO_DATE('" . date('Y-m-d', strtotime($fechaInicio)) . "', 'YYYY-MM-DD')";
+        $fecha_sql_fin = "TO_DATE('" . date('Y-m-d', strtotime($fechaFin)) . "', 'YYYY-MM-DD')";
+    } else {
+        // Modo fecha única
+        if ($fecha) {
+            $fecha_sql = "TO_DATE('" . date('Y-m-d', strtotime($fecha)) . "', 'YYYY-MM-DD')";
+            $fecha_sql_inicio = $fecha_sql;
+            $fecha_sql_fin = $fecha_sql;
+        } else {
+            $fecha_sql = "SYSDATE";
+            $fecha_sql_inicio = $fecha_sql;
+            $fecha_sql_fin = $fecha_sql;
+        }
+    }
+
+    if ($modo_rango) {
+       
+       $sql = "WITH fechas AS (
+            SELECT $fecha_sql_inicio + LEVEL - 1 AS fecha_dia
+            FROM dual
+            CONNECT BY LEVEL <= ($fecha_sql_fin - $fecha_sql_inicio) + 1
+                )
+                SELECT NP.IID_EMPLEADO AS IID,
+                        NP.V_NOMBRE || ' ' || NP.V_APE_PAT || ' ' || NP.V_APE_MAT AS NOMBRE,
+                        CASE
+                            WHEN RCD.IID_DEPTO = 1 THEN
+                            RA.V_DESCRIPCION || '-' || REPLACE(AL.V_NOMBRE, '-', '')
+                            WHEN RCD.IID_DEPTO >= 2 THEN
+                            RCD.V_DESCRIPCION || '-' || REPLACE(AL.V_NOMBRE, '-', '')
+                        END AS V_DESCRIPCION,
+                        RP.V_DESCRIPCION as DESCRIPCION,
+                        PL.V_RAZON_SOCIAL AS PLAZA,
+                        TO_CHAR(F.fecha_dia, 'YYYY-MM-DD') AS FECHA,
+                        A.formatted_punch_time AS TIEMPO,
+                        CASE
+                            WHEN A.formatted_punch_time IS NOT NULL OR
+                                (SELECT COUNT(*)
+                                    FROM RH_FALTAS R
+                                    INNER JOIN RH_FALTAS_CAT RC ON R.ID_TIPO_FALTA = RC.ID_TIPO_FALTA
+                                    WHERE trunc(R.D_FEC_INICIO) <= trunc(F.fecha_dia)
+                                    AND trunc(R.D_FEC_FIN) >= trunc(F.fecha_dia)
+                                    AND R.IID_EMPLEADO = NP.IID_EMPLEADO
+                                    AND R.ID_TIPO_FALTA IN (8, 14)) > 0 THEN
+                            A.HORA
+                            WHEN AL.IID_ALMACEN IN (1468, 1562, 43, 1706, 1770, 1773, 1136, 1705, 1554, 1775, 1755, 1387) THEN
+                            '09:00:00'
+                        END AS HORA,
+                        CASE WHEN (SELECT COUNT(*) FROM PERSONNEL_EMPLOYEE@DLRELOJ MP WHERE MP.EMP_CODE = NP.IID_EMPLEADO ) = 0 THEN
+                            'FALTA REGISTRO EN RELOJ '
+                            ELSE (SELECT CASE
+                                    WHEN RC.S_DESCRIPCION IS NULL THEN
+                                    ' '
+                                    ELSE
+                                    RC.S_DESCRIPCION
+                                END AS FALTA
+                            FROM RH_FALTAS R
+                            INNER JOIN RH_FALTAS_CAT RC ON R.ID_TIPO_FALTA = RC.ID_TIPO_FALTA
+                            WHERE trunc(R.D_FEC_INICIO) <= trunc(F.fecha_dia)
+                            AND trunc(R.D_FEC_FIN) >= TRUNC(F.fecha_dia)
+                            AND R.IID_EMPLEADO = NP.IID_EMPLEADO) END AS FALTA,
+                        CASE
+                            WHEN A.formatted_punch_time IS NOT NULL
+                            THEN
+                            'PRESENTE'
+                            WHEN AL.IID_ALMACEN IN (1468, 1562, 43, 1706, 1770, 1773, 1136, 1705, 1554, 1775, 1755, 1387) THEN
+                            'PRESENTE'
+                            WHEN ALMEMP.I_CHECA_RELOJ = 1 THEN
+                            'PRESENTE'
+                        END AS LLEGO_TIEMPO,
+                        CASE
+                            WHEN AL.V_NOMBRE IS NULL THEN
+                            'SIN ALMACEN NOMBREALMA'
+                            ELSE
+                            AL.V_NOMBRE || 'NOMBREALMA'
+                        END AS NOMBREALMA,
+                        AL.IID_ALMACEN AS ID_ALMACEN,
+                        RCD.IID_DEPTO,
+                        CASE WHEN AL.IID_ALMACEN IS NOT NULL THEN 
+                        CASE
+                            WHEN RCD.IID_DEPTO = 1 THEN
+                            (SELECT COUNT(*)
+                            FROM NO_CONTRATO PERSCON
+                                INNER JOIN NO_PERSONAL NUM_PERSONAL ON PERSCON.IID_CONTRATO = NUM_PERSONAL.IID_CONTRATO
+                                    AND PERSCON.IID_EMPLEADO = NUM_PERSONAL.IID_EMPLEADO
+                                LEFT JOIN RH_CAT_AREAS RAREAS ON PERSCON.IID_AREA = RAREAS.IID_AREA
+                                    AND PERSCON.IID_DEPTO = RAREAS.IID_DEPTO            
+                                LEFT JOIN RH_ALMACEN_EMP REMP ON REMP.NID_EMPLEADO = PERSCON.IID_EMPLEADO AND REMP.N_BASE = 1
+                            WHERE PERSCON.IID_DEPTO = RCD.IID_DEPTO
+                                AND PERSCON.IID_AREA = RA.IID_AREA
+                                AND PERSCON.IID_PLAZA = PL.IID_PLAZA
+                                AND NUM_PERSONAL.S_STATUS = 1
+                                AND REMP.NID_ALMACEN = AL.IID_ALMACEN)
+                            WHEN RCD.IID_DEPTO >= 2 THEN
+                            (SELECT COUNT(*)
+                            FROM NO_CONTRATO PERSCON
+                                INNER JOIN NO_PERSONAL NUM_PERSONAL ON PERSCON.IID_CONTRATO = NUM_PERSONAL.IID_CONTRATO
+                                    AND PERSCON.IID_EMPLEADO = NUM_PERSONAL.IID_EMPLEADO
+                                LEFT JOIN RH_CAT_AREAS RAREAS ON PERSCON.IID_AREA = RAREAS.IID_AREA
+                                    AND PERSCON.IID_DEPTO = RAREAS.IID_DEPTO            
+                                LEFT JOIN RH_ALMACEN_EMP REMP ON REMP.NID_EMPLEADO = PERSCON.IID_EMPLEADO AND REMP.N_BASE = 1
+                            WHERE PERSCON.IID_DEPTO = RCD.IID_DEPTO
+                                AND PERSCON.IID_PLAZA = PL.IID_PLAZA
+                                AND NUM_PERSONAL.S_STATUS = 1
+                                AND REMP.NID_ALMACEN = AL.IID_ALMACEN)
+                        END 
+                        ELSE
+                            (SELECT COUNT(*) FROM no_personal np 
+                                    LEFT JOIN rh_almacen_emp remp ON remp.nid_empleado = np.iid_empleado 
+                            WHERE np.s_status = 1
+                                    AND np.iid_plaza = PL.IID_PLAZA
+                                    AND remp.nid_empleado IS NULL)
+                        END AS TOTAL_EMPLEADO,
+                        (SELECT TO_CHAR(
+                            MAX(B2.punch_time),
+                            'HH:MI AM')
+                        FROM ICLOCK_TRANSACTION@DLRELOJ B2
+                        WHERE TO_NUMBER(B2.emp_code) = NP.IID_EMPLEADO
+                        AND TRUNC(B2.punch_time) = TRUNC(F.fecha_dia)) AS HORA_SALIDA
+                FROM fechas F
+                CROSS JOIN NO_PERSONAL NP
+                INNER JOIN NO_CONTRATO NC ON NP.IID_EMPLEADO = NC.IID_EMPLEADO
+                    AND NP.IID_CONTRATO = NC.IID_CONTRATO
+                INNER JOIN RH_PUESTOS RP ON NC.Iid_Puesto = RP.IID_PUESTO
+                LEFT JOIN RH_CAT_AREAS RA ON NC.IID_AREA = RA.IID_AREA
+                    AND RA.IID_DEPTO = NC.IID_DEPTO
+                INNER JOIN PLAZA PL ON NP.IID_PLAZA = PL.IID_PLAZA
+                INNER JOIN RH_CAT_DEPTO RCD ON RCD.IID_DEPTO = NC.IID_DEPTO
+                LEFT JOIN RH_ALMACEN_EMP ALMEMP ON ALMEMP.NID_EMPLEADO = NC.IID_EMPLEADO
+                    AND ALMEMP.N_BASE = 1
+                LEFT JOIN ALMACEN AL ON ALMEMP.NID_ALMACEN = AL.IID_ALMACEN
+                LEFT JOIN (
+                    SELECT TO_NUMBER(emp_code) AS EMP_CODE,
+                        TO_CHAR(punch_time, 'DD/MM/YYYY HH24:MI:SS') AS formatted_punch_time,
+                        TO_CHAR(punch_time, 'DD/MM/YYYY') AS formatted_punch_time2,
+                        TO_CHAR(punch_time, 'HH24:MI AM') AS HORA,
+                        TRUNC(punch_time) AS fecha_reloj
+                    FROM (SELECT emp_code,
+                                punch_time,
+                                ROW_NUMBER() OVER(PARTITION BY emp_code, TRUNC(punch_time) ORDER BY punch_time ASC) as rn
+                        FROM ICLOCK_TRANSACTION@DLRELOJ)
+                    WHERE rn = 1
+                ) A ON A.EMP_CODE = NP.IID_EMPLEADO AND A.fecha_reloj = F.fecha_dia
+                WHERE NP.S_STATUS = 1
+                    AND NP.IID_PLAZA = $iid_plaza
+                    AND NC.IID_EMPLEADO NOT IN (209, 2400, 1025)
+                ORDER BY NP.IID_PLAZA, AL.IID_ALMACEN, RCD.IID_DEPTO, RA.IID_AREA, 
+                        RA.IID_DEPTO, NC.IID_PUESTO, NC.IID_EMPLEADO, F.fecha_dia";
+    }else{
+        // SQL para fecha única 
         $sql = "SELECT NP.IID_EMPLEADO AS IID,
                         NP.V_NOMBRE || ' ' || NP.V_APE_PAT || ' ' || NP.V_APE_MAT AS NOMBRE,
                         CASE
@@ -90,8 +261,8 @@ class AsistenciaPersonal
                                     FROM RH_FALTAS R
                                     INNER JOIN RH_FALTAS_CAT RC ON R.ID_TIPO_FALTA =
                                                                 RC.ID_TIPO_FALTA
-                                    WHERE trunc(R.D_FEC_INICIO) <= trunc(SYSDATE)
-                                    AND trunc(R.D_FEC_FIN) >= trunc(SYSDATE)
+                                    WHERE trunc(R.D_FEC_INICIO) <= trunc($fecha_sql)
+                                    AND trunc(R.D_FEC_FIN) >= trunc($fecha_sql)
                                     AND R.IID_EMPLEADO = NP.IID_EMPLEADO
                                     AND R.ID_TIPO_FALTA IN (8, 14)) > 0 THEN
                             A.HORA
@@ -109,8 +280,8 @@ class AsistenciaPersonal
                                 END AS FALTA
                             FROM RH_FALTAS R
                             INNER JOIN RH_FALTAS_CAT RC ON R.ID_TIPO_FALTA = RC.ID_TIPO_FALTA
-                            WHERE trunc(R.D_FEC_INICIO) <= trunc(SYSDATE)
-                            AND trunc(R.D_FEC_FIN) >= TRUNC(SYSDATE)
+                            WHERE trunc(R.D_FEC_INICIO) <= trunc($fecha_sql)
+                            AND trunc(R.D_FEC_FIN) >= TRUNC($fecha_sql)
                             AND R.IID_EMPLEADO = NP.IID_EMPLEADO) END AS FALTA,
                         CASE
                             WHEN A.formatted_punch_time IS NOT NULL
@@ -194,10 +365,10 @@ class AsistenciaPersonal
                             CASE
                             WHEN RCD.IID_DEPTO = 1 THEN
                             (SELECT COUNT(*) FROM (SELECT NP.*, TO_NUMBER(B.EMP_CODE) FROM NO_PERSONAL NP 
-                                       LEFT JOIN ICLOCK_TRANSACTION@DLRELOJ B ON NP.IID_EMPLEADO = B.EMP_CODE AND TO_CHAR(punch_time, 'DD/MM/YYYY') = TO_CHAR(SYSDATE, 'DD/MM/YYYY')       
+                                       LEFT JOIN ICLOCK_TRANSACTION@DLRELOJ B ON NP.IID_EMPLEADO = B.EMP_CODE AND TO_CHAR(punch_time, 'DD/MM/YYYY') = TO_CHAR($fecha_sql, 'DD/MM/YYYY')       
                                        INNER JOIN RH_ALMACEN_EMP REMP ON REMP.NID_EMPLEADO = NP.IID_EMPLEADO AND REMP.N_BASE = 1 AND REMP.I_CHECA_RELOJ <> 1 AND REMP.NID_ALMACEN NOT IN (1468, 1562, 43, 1706, 1770, 1773, 1136, 1705, 1554, 1775, 1755, 1387)
                                        INNER JOIN PERSONNEL_EMPLOYEE@DLRELOJ RGR ON NP.IID_EMPLEADO = RGR.EMP_CODE
-                                       LEFT JOIN RH_FALTAS RF ON RF.IID_EMPLEADO = NP.IID_EMPLEADO AND RF.ID_TIPO_FALTA <> 6 AND (trunc(RF.d_fec_inicio) <= trunc(SYSDATE) AND trunc(RF.d_fec_fin) >= TRUNC(SYSDATE))
+                                       LEFT JOIN RH_FALTAS RF ON RF.IID_EMPLEADO = NP.IID_EMPLEADO AND RF.ID_TIPO_FALTA <> 6 AND (trunc(RF.d_fec_inicio) <= trunc($fecha_sql) AND trunc(RF.d_fec_fin) >= TRUNC($fecha_sql))
                                        INNER JOIN NO_CONTRATO PSCON ON PSCON.IID_EMPLEADO = NP.IID_EMPLEADO AND PSCON.IID_CONTRATO = NP.IID_CONTRATO
                                        WHERE NP.S_STATUS = 1 AND B.EMP_CODE IS NULL AND NP.IID_PLAZA = PL.IID_PLAZA AND REMP.NID_ALMACEN = AL.IID_ALMACEN AND RF.IID_EMPLEADO IS NULL AND PSCON.IID_DEPTO = RCD.IID_DEPTO AND PSCON.IID_AREA = RA.IID_AREA
                               UNION ALL
@@ -210,14 +381,14 @@ class AsistenciaPersonal
                                             AND PSCON.IID_DEPTO = RCD.IID_DEPTO
                                             AND PSCON.IID_AREA = RA.IID_AREA
                                             AND REM.NID_ALMACEN = AL.IID_ALMACEN
-                                            AND (trunc(RF.d_fec_inicio) <= trunc(SYSDATE) AND trunc(RF.d_fec_fin) >= TRUNC(SYSDATE))
+                                            AND (trunc(RF.d_fec_inicio) <= trunc($fecha_sql) AND trunc(RF.d_fec_fin) >= TRUNC($fecha_sql))
                                             ) X)                           
                             ELSE
                             (SELECT COUNT(*) FROM (SELECT NP.*, TO_NUMBER(B.EMP_CODE) FROM NO_PERSONAL NP 
-                                       LEFT JOIN ICLOCK_TRANSACTION@DLRELOJ B ON NP.IID_EMPLEADO = B.EMP_CODE AND TO_CHAR(punch_time, 'DD/MM/YYYY') = TO_CHAR(SYSDATE, 'DD/MM/YYYY')        
+                                       LEFT JOIN ICLOCK_TRANSACTION@DLRELOJ B ON NP.IID_EMPLEADO = B.EMP_CODE AND TO_CHAR(punch_time, 'DD/MM/YYYY') = TO_CHAR($fecha_sql, 'DD/MM/YYYY')        
                                        INNER JOIN RH_ALMACEN_EMP REMP ON REMP.NID_EMPLEADO = NP.IID_EMPLEADO AND REMP.N_BASE = 1 AND REMP.I_CHECA_RELOJ <> 1 AND REMP.NID_ALMACEN NOT IN (1468, 1562, 43, 1706, 1770, 1773, 1136, 1705, 1554, 1775, 1755, 1387)
                                        INNER JOIN PERSONNEL_EMPLOYEE@DLRELOJ RGR ON NP.IID_EMPLEADO = RGR.EMP_CODE
-                                       LEFT JOIN RH_FALTAS RF ON RF.IID_EMPLEADO = NP.IID_EMPLEADO AND RF.ID_TIPO_FALTA <> 6 AND (trunc(RF.d_fec_inicio) <= trunc(SYSDATE) AND trunc(RF.d_fec_fin) >= TRUNC(SYSDATE))
+                                       LEFT JOIN RH_FALTAS RF ON RF.IID_EMPLEADO = NP.IID_EMPLEADO AND RF.ID_TIPO_FALTA <> 6 AND (trunc(RF.d_fec_inicio) <= trunc($fecha_sql) AND trunc(RF.d_fec_fin) >= TRUNC($fecha_sql))
                                        INNER JOIN NO_CONTRATO PSCON ON PSCON.IID_EMPLEADO = NP.IID_EMPLEADO AND PSCON.IID_CONTRATO = NP.IID_CONTRATO
                                        WHERE NP.S_STATUS = 1 AND B.EMP_CODE IS NULL AND NP.IID_PLAZA = PL.IID_PLAZA AND REMP.NID_ALMACEN = AL.IID_ALMACEN AND RF.IID_EMPLEADO IS NULL AND PSCON.IID_DEPTO = RCD.IID_DEPTO
                               UNION ALL
@@ -229,7 +400,7 @@ class AsistenciaPersonal
                                             AND NP.IID_PLAZA = PL.IID_PLAZA
                                             AND PSCON.IID_DEPTO = RCD.IID_DEPTO
                                             AND REM.NID_ALMACEN = AL.IID_ALMACEN
-                                            AND (trunc(RF.d_fec_inicio) <= trunc(SYSDATE) AND trunc(RF.d_fec_fin) >= TRUNC(SYSDATE))
+                                            AND (trunc(RF.d_fec_inicio) <= trunc($fecha_sql) AND trunc(RF.d_fec_fin) >= TRUNC($fecha_sql))
                                             ) X)                        
                         END END AS TOTAL_ASISTENCIAS,
                         (SELECT COUNT(CASE
@@ -280,8 +451,8 @@ class AsistenciaPersonal
                                 AND NUM_PERSONAL.S_STATUS = 1
                                 AND NCON.IID_ALMACEN = AL.IID_ALMACEN
                                 AND RF.id_tipo_falta IN (8, 14)
-                                AND trunc(RF.D_FEC_INICIO) <= trunc(SYSDATE)
-                                AND trunc(RF.D_FEC_FIN) >= trunc(SYSDATE))
+                                AND trunc(RF.D_FEC_INICIO) <= trunc($fecha_sql)
+                                AND trunc(RF.D_FEC_FIN) >= trunc($fecha_sql))
                             ELSE
                             (SELECT COUNT(DISTINCT(PERSCON.IID_EMPLEADO))
                                 FROM RH_PERSONAL_CONTRATO PERSCON
@@ -304,8 +475,8 @@ class AsistenciaPersonal
                                 AND NUM_PERSONAL.S_STATUS = 1
                                 AND NCON.IID_ALMACEN = AL.IID_ALMACEN
                                 AND RF.id_tipo_falta IN (8, 14)
-                                AND trunc(RF.D_FEC_INICIO) <= trunc(SYSDATE)
-                                AND trunc(RF.D_FEC_FIN) >= trunc(SYSDATE))
+                                AND trunc(RF.D_FEC_INICIO) <= trunc($fecha_sql)
+                                AND trunc(RF.D_FEC_FIN) >= trunc($fecha_sql))
                         END AS FALTAS_PERMITIDAS,
                         CASE
                             WHEN RCD.IID_DEPTO = 1 THEN
@@ -331,8 +502,8 @@ class AsistenciaPersonal
                                 AND NUM_PERSONAL.S_STATUS = 1
                                 AND NCON.IID_ALMACEN = AL.IID_ALMACEN
                                 AND RF.id_tipo_falta IN (6)
-                                AND trunc(RF.D_FEC_INICIO) <= trunc(SYSDATE)
-                                AND trunc(RF.D_FEC_FIN) >= trunc(SYSDATE))
+                                AND trunc(RF.D_FEC_INICIO) <= trunc($fecha_sql)
+                                AND trunc(RF.D_FEC_FIN) >= trunc($fecha_sql))
                             ELSE
                             (SELECT COUNT(DISTINCT(PERSCON.IID_EMPLEADO))
                                 FROM RH_PERSONAL_CONTRATO PERSCON
@@ -355,9 +526,16 @@ class AsistenciaPersonal
                                 AND NUM_PERSONAL.S_STATUS = 1
                                 AND NCON.IID_ALMACEN = AL.IID_ALMACEN
                                 AND RF.id_tipo_falta IN (6)
-                                AND trunc(RF.D_FEC_INICIO) <= trunc(SYSDATE)
-                                AND trunc(RF.D_FEC_FIN) >= trunc(SYSDATE))
-                        END AS FALTAS_INJUSTIFICADAS
+                                AND trunc(RF.D_FEC_INICIO) <= trunc($fecha_sql)
+                                AND trunc(RF.D_FEC_FIN) >= trunc($fecha_sql))
+                        END AS FALTAS_INJUSTIFICADAS,
+
+                        (SELECT TO_CHAR(
+                            MAX(B2.punch_time),
+                            'HH:MI AM')
+                        FROM ICLOCK_TRANSACTION@DLRELOJ B2
+                        WHERE TO_NUMBER(B2.emp_code) = NP.IID_EMPLEADO
+                        AND TRUNC(B2.punch_time) = TRUNC($fecha_sql))AS HORA_SALIDA
                     FROM (select *
                             from (SELECT TO_NUMBER(emp_code) AS EMP_CODE,
                                         TO_CHAR(punch_time, 'DD/MM/YYYY HH24:MI:SS') AS formatted_punch_time,
@@ -369,7 +547,7 @@ class AsistenciaPersonal
                                             FROM ICLOCK_TRANSACTION@DLRELOJ)
                                     WHERE rn = 1
                                     ORDER BY punch_time DESC) b
-                            where b.formatted_punch_time2 = TO_CHAR(SYSDATE, 'DD/MM/YYYY')) A
+                            where b.formatted_punch_time2 = TO_CHAR($fecha_sql, 'DD/MM/YYYY')) A
                             RIGHT JOIN NO_PERSONAL NP ON A.EMP_CODE = NP.IID_EMPLEADO
                     INNER JOIN NO_CONTRATO NC ON NP.IID_EMPLEADO = NC.IID_EMPLEADO
                                                     AND NP.IID_CONTRATO = NC.IID_CONTRATO
@@ -385,27 +563,29 @@ class AsistenciaPersonal
                                     WHERE NP.S_STATUS = 1
                                         AND NP.IID_PLAZA = $iid_plaza
                                         AND NC.IID_EMPLEADO NOT IN (209, 2400, 1025)
-                                    ORDER BY NP.IID_PLAZA, ALMEMP.NID_ALMACEN, RCD.IID_DEPTO, RA.IID_AREA, RA.IID_DEPTO, NC.IID_PUESTO, NC.IID_EMPLEADO";
-
-               # echo $sql;
-                $stid = oci_parse($conn, $sql);
-                oci_execute($stid);
-
-                while (($row = oci_fetch_assoc($stid)) != false)
-                {
-                    $res_array[]= $row;
-                }
-
-                oci_free_statement($stid);
-                oci_close($conn);
-
-                // Devolver los datos en formato JSON
-                header('Content-Type: application/json');
-                echo json_encode($res_array);
-                exit;
+                                    ORDER BY NP.IID_PLAZA, ALMEMP.NID_ALMACEN, RCD.IID_DEPTO, RA.IID_AREA, RA.IID_DEPTO, NC.IID_PUESTO, NC.IID_EMPLEADO"; 
+    
     }
-
-    public function obtenerReporteGeneral(){
+  
+    
+    
+                        //echo $sql; // Para depuración
+    $stid = oci_parse($conn, $sql);
+    oci_execute($stid);
+    
+    while (($row = oci_fetch_assoc($stid)) != false) {
+        $res_array[] = $row;
+    }
+    
+    oci_free_statement($stid);
+    oci_close($conn);
+    
+    // Devolver los datos en formato JSON
+    header('Content-Type: application/json');
+    echo json_encode($res_array);
+    exit;
+}
+    public function obtenerReporteGeneral($fecha = null){
         #Conexion
         $conn = conexion::conectar();
         $res_array = array();
@@ -459,122 +639,133 @@ class AsistenciaPersonal
 
                 $in_plaza = " AND PL.IID_PLAZA IN ($andPlazaIn) ";
             }    
+            //$fecha = '2025-12-12';
+            if ($fecha) {
+                // Si se proporciona una fecha, formatearla adecuadamente
+                $fecha_formateada = date('d/m/Y', strtotime($fecha));
+                $fecha_sql = "TO_DATE('" . date('Y-m-d', strtotime($fecha)) . "', 'YYYY-MM-DD')";
+                $fecha_formateada_str = "'" . $fecha_formateada . "'";
+            } else {
+                // Si no se proporciona una fecha, usar la fecha actual
+                $fecha_actual = date('d/m/Y');
+                $fecha_sql = "SYSDATE";
+                $fecha_formateada_str = "TO_CHAR(SYSDATE, 'DD/MM/YYYY')";   
+            } 
 
 
         #echo $in_plaza."valor de plaza";
         $sql = "SELECT PL.V_RAZON_SOCIAL,
-        PL.IID_PLAZA,
-        COUNT(CASE WHEN NP.IID_NUMNOMINA = 1 OR NP.IID_NUMNOMINA IS NULL THEN 1 END) AS QUINCENAL,
-        COUNT(CASE WHEN NP.IID_NUMNOMINA = 2 THEN 1 END) AS SEMANAL,
-        COUNT(NP.IID_EMPLEADO) AS PERSONAL_ACTIVO,    
-        (SELECT COUNT(*) FROM PERSONNEL_EMPLOYEE@DLRELOJ W
-        INNER JOIN NO_PERSONAL NUM ON W.EMP_CODE = NUM.IID_EMPLEADO
-        INNER JOIN RH_PERSONAL_CONTRATO RCUN ON RCUN.IID_EMPLEADO = NUM.IID_EMPLEADO AND RCUN.IID_RCONTRATO = NUM.IID_CONTRATO
-        INNER JOIN RH_CAT_AREAS RCAN ON RCUN.IID_AREA = RCAN.IID_AREA AND RCUN.IID_DEPTO = RCAN.IID_DEPTO
-        INNER JOIN NO_CONTRATO NOMC ON NOMC.IID_CONTRATO = NUM.IID_CONTRATO AND NOMC.IID_EMPLEADO = NUM.IID_EMPLEADO
-        WHERE NUM.S_STATUS = 1 AND NUM.IID_PLAZA = PL.IID_PLAZA 
-        AND NUM.IID_EMPLEADO  NOT IN (209, 1025) )    AS PERSONAL_REGISTRADO,                                
-        (SELECT COUNT(*)
-                        FROM RH_FALTAS R
-                        INNER JOIN NO_PERSONAL NUM ON R.IID_EMPLEADO = NUM.IID_EMPLEADO
-                        INNER JOIN RH_FALTAS_CAT RC ON R.ID_TIPO_FALTA = RC.ID_TIPO_FALTA
-                        INNER JOIN NO_CONTRATO RCUN ON RCUN.IID_EMPLEADO = NUM.IID_EMPLEADO AND RCUN.IID_CONTRATO = NUM.IID_CONTRATO
+                        PL.IID_PLAZA,
+                        COUNT(CASE WHEN NP.IID_NUMNOMINA = 1 OR NP.IID_NUMNOMINA IS NULL THEN 1 END) AS QUINCENAL,
+                        COUNT(CASE WHEN NP.IID_NUMNOMINA = 2 THEN 1 END) AS SEMANAL,
+                        COUNT(NP.IID_EMPLEADO) AS PERSONAL_ACTIVO,    
+                        (SELECT COUNT(*) FROM PERSONNEL_EMPLOYEE@DLRELOJ W
+                        INNER JOIN NO_PERSONAL NUM ON W.EMP_CODE = NUM.IID_EMPLEADO
+                        INNER JOIN RH_PERSONAL_CONTRATO RCUN ON RCUN.IID_EMPLEADO = NUM.IID_EMPLEADO AND RCUN.IID_RCONTRATO = NUM.IID_CONTRATO
                         INNER JOIN RH_CAT_AREAS RCAN ON RCUN.IID_AREA = RCAN.IID_AREA AND RCUN.IID_DEPTO = RCAN.IID_DEPTO
-                        WHERE trunc(R.D_FEC_INICIO) <= trunc(SYSDATE)
-                            AND trunc(R.D_FEC_FIN) >= trunc(SYSDATE)
-                            AND NUM.IID_EMPLEADO  NOT IN (209, 1025) 
-                            AND NUM.S_STATUS = 1 AND NUM.IID_PLAZA = PL.IID_PLAZA AND R.ID_TIPO_FALTA IN (3, 4, 5, 12)) AS FALTA_INCAPACIDAD, 
-        COUNT(CASE WHEN AL.IID_ALMACEN IN (1468, 1562, 43, 1706, 1770, 1773, 1136, 1705, 1554, 1775, 1755, 1387) THEN 1 END) AS FALTA_HABILITADO,   
-        (SELECT COUNT(*)
-                        FROM RH_FALTAS R
-                        INNER JOIN NO_PERSONAL NUM ON R.IID_EMPLEADO = NUM.IID_EMPLEADO
-                        INNER JOIN RH_FALTAS_CAT RC ON R.ID_TIPO_FALTA = RC.ID_TIPO_FALTA
-                        INNER JOIN NO_CONTRATO RCUN ON RCUN.IID_EMPLEADO = NUM.IID_EMPLEADO AND RCUN.IID_CONTRATO = NUM.IID_CONTRATO
-                        INNER JOIN RH_CAT_AREAS RCAN ON RCUN.IID_AREA = RCAN.IID_AREA AND RCUN.IID_DEPTO = RCAN.IID_DEPTO
-                        WHERE trunc(R.D_FEC_INICIO) <= trunc(SYSDATE)
-                            AND trunc(R.D_FEC_FIN) >= trunc(SYSDATE)
-                            AND NUM.IID_EMPLEADO  NOT IN (209, 1025) 
-                            AND NUM.S_STATUS = 1 AND NUM.IID_PLAZA = PL.IID_PLAZA AND R.ID_TIPO_FALTA IN (8)) AS FALTA_COMISION_PLAZAS, 
-        (SELECT COUNT(*)
-                        FROM RH_FALTAS R
-                        INNER JOIN NO_PERSONAL NUM ON R.IID_EMPLEADO = NUM.IID_EMPLEADO
-                        INNER JOIN RH_FALTAS_CAT RC ON R.ID_TIPO_FALTA = RC.ID_TIPO_FALTA
-                        INNER JOIN NO_CONTRATO RCUN ON RCUN.IID_EMPLEADO = NUM.IID_EMPLEADO AND RCUN.IID_CONTRATO = NUM.IID_CONTRATO
-                        INNER JOIN RH_CAT_AREAS RCAN ON RCUN.IID_AREA = RCAN.IID_AREA AND RCUN.IID_DEPTO = RCAN.IID_DEPTO
-                        WHERE trunc(R.D_FEC_INICIO) <= trunc(SYSDATE)
-                            AND trunc(R.D_FEC_FIN) >= trunc(SYSDATE)
-                            AND NUM.IID_EMPLEADO  NOT IN (209, 1025) 
-                            AND NUM.S_STATUS = 1 AND NUM.IID_PLAZA = PL.IID_PLAZA AND R.ID_TIPO_FALTA IN (6)) AS FALTA_INJUSTIFICADA, 
-        (SELECT COUNT(*)
-                        FROM RH_FALTAS R
-                        INNER JOIN NO_PERSONAL NUM ON R.IID_EMPLEADO = NUM.IID_EMPLEADO
-                        INNER JOIN RH_FALTAS_CAT RC ON R.ID_TIPO_FALTA = RC.ID_TIPO_FALTA
-                        INNER JOIN NO_CONTRATO RCUN ON RCUN.IID_EMPLEADO = NUM.IID_EMPLEADO AND RCUN.IID_CONTRATO = NUM.IID_CONTRATO
-                        INNER JOIN RH_CAT_AREAS RCAN ON RCUN.IID_AREA = RCAN.IID_AREA AND RCUN.IID_DEPTO = RCAN.IID_DEPTO
-                        WHERE trunc(R.D_FEC_INICIO) <= trunc(SYSDATE)
-                            AND trunc(R.D_FEC_FIN) >= trunc(SYSDATE)
-                             AND NUM.IID_EMPLEADO  NOT IN (209, 1025) 
-                            AND NUM.S_STATUS = 1 AND NUM.IID_PLAZA = PL.IID_PLAZA AND R.ID_TIPO_FALTA IN (14)) AS HOME_OFFICE,  
-        (SELECT COUNT(*)
-                        FROM RH_FALTAS R
-                        INNER JOIN NO_PERSONAL NUM ON R.IID_EMPLEADO = NUM.IID_EMPLEADO
-                        INNER JOIN RH_FALTAS_CAT RC ON R.ID_TIPO_FALTA = RC.ID_TIPO_FALTA
-                        INNER JOIN NO_CONTRATO RCUN ON RCUN.IID_EMPLEADO = NUM.IID_EMPLEADO AND RCUN.IID_CONTRATO = NUM.IID_CONTRATO
-                        INNER JOIN RH_CAT_AREAS RCAN ON RCUN.IID_AREA = RCAN.IID_AREA AND RCUN.IID_DEPTO = RCAN.IID_DEPTO
-                        WHERE trunc(R.D_FEC_INICIO) <= trunc(SYSDATE)
-                            AND trunc(R.D_FEC_FIN) >= trunc(SYSDATE)
-                             AND NUM.IID_EMPLEADO  NOT IN (209, 1025) 
-                            AND NUM.S_STATUS = 1 AND NUM.IID_PLAZA = PL.IID_PLAZA AND R.ID_TIPO_FALTA IN (9)) AS VACACIONES,     
-        COUNT(A.formatted_punch_time) AS ASISTENCIA,
-        (SELECT COUNT(*) FROM RH_SOL_RECLUTA_SEL RSEL WHERE RSEL.IID_PLAZA_ASIGNA = PL.IID_PLAZA AND RSEL.N_STATUS <= 2 AND (RSEL.N_STANDBYE <> 1 OR RSEL.N_STANDBYE IS NULL) ) AS VACANTES,
-        (SELECT COUNT(*) FROM RH_SOL_RECLUTA_SEL RSEL WHERE RSEL.IID_PLAZA_ASIGNA = PL.IID_PLAZA AND RSEL.N_STATUS <= 2 AND RSEL.N_STANDBYE = 1 ) AS VACANTES_STANDBY,
-        (SELECT COUNT(*)
-          FROM (SELECT NP.*, TO_NUMBER(B.EMP_CODE)
-                  FROM NO_PERSONAL NP
-                  LEFT JOIN ICLOCK_TRANSACTION@DLRELOJ B ON NP.IID_EMPLEADO =
-                                                            B.EMP_CODE
-                                                        AND TO_CHAR(punch_time, 'DD/MM/YYYY') = TO_CHAR(SYSDATE, 'DD/MM/YYYY')
-                                                        INNER JOIN RH_ALMACEN_EMP REMP ON REMP.NID_EMPLEADO = NP.IID_EMPLEADO AND REMP.N_BASE = 1 AND REMP.I_CHECA_RELOJ <> 1 AND REMP.NID_ALMACEN NOT IN (1468, 1562, 43, 1706, 1770, 1773, 1136, 1705, 1554, 1775, 1755, 1387)
-                 LEFT JOIN RH_FALTAS RF ON RF.IID_EMPLEADO = NP.IID_EMPLEADO AND RF.ID_TIPO_FALTA <> 6 AND (trunc(RF.d_fec_inicio) <= trunc(SYSDATE) AND trunc(RF.d_fec_fin) >= TRUNC(SYSDATE))
-                 WHERE NP.S_STATUS = 1
-                    AND NP.IID_EMPLEADO  NOT IN (209, 1025) 
-                   AND B.EMP_CODE IS NULL
-                   AND NP.IID_PLAZA = PL.IID_PLAZA
-                   AND NP.IID_NUMNOMINA IS NOT NULL
-                   AND RF.IID_EMPLEADO IS NULL 
-                UNION ALL
-                SELECT NP.*, NP.IID_EMPLEADO
-                  FROM NO_PERSONAL NP
-                 INNER JOIN RH_FALTAS RF ON RF.IID_EMPLEADO = NP.IID_EMPLEADO
-                 WHERE RF.ID_TIPO_FALTA = 6
-                    AND NP.IID_EMPLEADO  NOT IN (209, 1025) 
-                    AND NP.IID_NUMNOMINA IS NOT NULL
-                   AND NP.IID_PLAZA = PL.IID_PLAZA
-                   AND (trunc(RF.d_fec_inicio) <= trunc(SYSDATE) AND
-                        trunc(RF.d_fec_fin) >= TRUNC(SYSDATE))) X) AS FALTAS_SIN_JUSTIFICACION 
-FROM (select *
-                        from (SELECT TO_NUMBER(emp_code) AS EMP_CODE,
-                                        TO_CHAR(punch_time, 'DD/MM/YYYY HH24:MI:SS') AS formatted_punch_time,
-                                        TO_CHAR(punch_time, 'DD/MM/YYYY') AS formatted_punch_time2
-                                FROM (SELECT emp_code,
-                                                punch_time,
-                                                ROW_NUMBER() OVER(PARTITION BY emp_code, TRUNC(punch_time) ORDER BY punch_time ASC) as rn
-                                        FROM ICLOCK_TRANSACTION@DLRELOJ)
-                                WHERE rn = 1
-                                ORDER BY punch_time DESC) b
-                        where b.formatted_punch_time2 = TO_CHAR(SYSDATE, 'DD/MM/YYYY')) A
-                RIGHT JOIN NO_PERSONAL NP ON A.EMP_CODE = NP.IID_EMPLEADO
-                INNER JOIN NO_CONTRATO NOMC ON NOMC.IID_CONTRATO = NP.IID_CONTRATO AND NOMC.IID_EMPLEADO = NP.IID_EMPLEADO
-                INNER JOIN RH_PUESTOS RP ON NOMC.IID_PUESTO = RP.IID_PUESTO
-                INNER JOIN RH_CAT_AREAS RA ON NOMC.IID_AREA = RA.IID_AREA
-                                            AND RA.IID_DEPTO = NOMC.IID_DEPTO
-                INNER JOIN PLAZA PL ON NP.IID_PLAZA = PL.IID_PLAZA
-                INNER JOIN RH_CAT_DEPTO RCD ON RCD.IID_DEPTO = RA.IID_DEPTO                                        
-                LEFT  JOIN RH_ALMACEN_EMP ALMEMP ON ALMEMP.NID_EMPLEADO = NOMC.IID_EMPLEADO AND ALMEMP.N_BASE =1 
-                LEFT JOIN ALMACEN AL ON ALMEMP.NID_ALMACEN = AL.IID_ALMACEN
-WHERE NP.S_STATUS = 1  AND NP.IID_EMPLEADO  NOT IN (209, 1025)  ".$in_plaza."
-GROUP BY PL.V_RAZON_SOCIAL, PL.IID_PLAZA        
-ORDER BY PL.IID_PLAZA";
+                        INNER JOIN NO_CONTRATO NOMC ON NOMC.IID_CONTRATO = NUM.IID_CONTRATO AND NOMC.IID_EMPLEADO = NUM.IID_EMPLEADO
+                        WHERE NUM.S_STATUS = 1 AND NUM.IID_PLAZA = PL.IID_PLAZA 
+                        AND NUM.IID_EMPLEADO  NOT IN (209, 1025) )    AS PERSONAL_REGISTRADO,                                
+                        (SELECT COUNT(*)
+                                        FROM RH_FALTAS R
+                                        INNER JOIN NO_PERSONAL NUM ON R.IID_EMPLEADO = NUM.IID_EMPLEADO
+                                        INNER JOIN RH_FALTAS_CAT RC ON R.ID_TIPO_FALTA = RC.ID_TIPO_FALTA
+                                        INNER JOIN NO_CONTRATO RCUN ON RCUN.IID_EMPLEADO = NUM.IID_EMPLEADO AND RCUN.IID_CONTRATO = NUM.IID_CONTRATO
+                                        INNER JOIN RH_CAT_AREAS RCAN ON RCUN.IID_AREA = RCAN.IID_AREA AND RCUN.IID_DEPTO = RCAN.IID_DEPTO
+                                        WHERE trunc(R.D_FEC_INICIO) <= trunc($fecha_sql)
+                                            AND trunc(R.D_FEC_FIN) >= trunc($fecha_sql)
+                                            AND NUM.IID_EMPLEADO  NOT IN (209, 1025) 
+                                            AND NUM.S_STATUS = 1 AND NUM.IID_PLAZA = PL.IID_PLAZA AND R.ID_TIPO_FALTA IN (3, 4, 5, 12)) AS FALTA_INCAPACIDAD, 
+                        COUNT(CASE WHEN AL.IID_ALMACEN IN (1468, 1562, 43, 1706, 1770, 1773, 1136, 1705, 1554, 1775, 1755, 1387) THEN 1 END) AS FALTA_HABILITADO,   
+                        (SELECT COUNT(*)
+                                        FROM RH_FALTAS R
+                                        INNER JOIN NO_PERSONAL NUM ON R.IID_EMPLEADO = NUM.IID_EMPLEADO
+                                        INNER JOIN RH_FALTAS_CAT RC ON R.ID_TIPO_FALTA = RC.ID_TIPO_FALTA
+                                        INNER JOIN NO_CONTRATO RCUN ON RCUN.IID_EMPLEADO = NUM.IID_EMPLEADO AND RCUN.IID_CONTRATO = NUM.IID_CONTRATO
+                                        INNER JOIN RH_CAT_AREAS RCAN ON RCUN.IID_AREA = RCAN.IID_AREA AND RCUN.IID_DEPTO = RCAN.IID_DEPTO
+                                        WHERE trunc(R.D_FEC_INICIO) <= trunc($fecha_sql)
+                                            AND trunc(R.D_FEC_FIN) >= trunc($fecha_sql)
+                                            AND NUM.IID_EMPLEADO  NOT IN (209, 1025) 
+                                            AND NUM.S_STATUS = 1 AND NUM.IID_PLAZA = PL.IID_PLAZA AND R.ID_TIPO_FALTA IN (8)) AS FALTA_COMISION_PLAZAS, 
+                        (SELECT COUNT(*)
+                                        FROM RH_FALTAS R
+                                        INNER JOIN NO_PERSONAL NUM ON R.IID_EMPLEADO = NUM.IID_EMPLEADO
+                                        INNER JOIN RH_FALTAS_CAT RC ON R.ID_TIPO_FALTA = RC.ID_TIPO_FALTA
+                                        INNER JOIN NO_CONTRATO RCUN ON RCUN.IID_EMPLEADO = NUM.IID_EMPLEADO AND RCUN.IID_CONTRATO = NUM.IID_CONTRATO
+                                        INNER JOIN RH_CAT_AREAS RCAN ON RCUN.IID_AREA = RCAN.IID_AREA AND RCUN.IID_DEPTO = RCAN.IID_DEPTO
+                                        WHERE trunc(R.D_FEC_INICIO) <= trunc($fecha_sql)
+                                            AND trunc(R.D_FEC_FIN) >= trunc($fecha_sql)
+                                            AND NUM.IID_EMPLEADO  NOT IN (209, 1025) 
+                                            AND NUM.S_STATUS = 1 AND NUM.IID_PLAZA = PL.IID_PLAZA AND R.ID_TIPO_FALTA IN (6)) AS FALTA_INJUSTIFICADA, 
+                        (SELECT COUNT(*)
+                                        FROM RH_FALTAS R
+                                        INNER JOIN NO_PERSONAL NUM ON R.IID_EMPLEADO = NUM.IID_EMPLEADO
+                                        INNER JOIN RH_FALTAS_CAT RC ON R.ID_TIPO_FALTA = RC.ID_TIPO_FALTA
+                                        INNER JOIN NO_CONTRATO RCUN ON RCUN.IID_EMPLEADO = NUM.IID_EMPLEADO AND RCUN.IID_CONTRATO = NUM.IID_CONTRATO
+                                        INNER JOIN RH_CAT_AREAS RCAN ON RCUN.IID_AREA = RCAN.IID_AREA AND RCUN.IID_DEPTO = RCAN.IID_DEPTO
+                                        WHERE trunc(R.D_FEC_INICIO) <= trunc($fecha_sql)
+                                            AND trunc(R.D_FEC_FIN) >= trunc($fecha_sql)
+                                            AND NUM.IID_EMPLEADO  NOT IN (209, 1025) 
+                                            AND NUM.S_STATUS = 1 AND NUM.IID_PLAZA = PL.IID_PLAZA AND R.ID_TIPO_FALTA IN (14)) AS HOME_OFFICE,  
+                        (SELECT COUNT(*)
+                                        FROM RH_FALTAS R
+                                        INNER JOIN NO_PERSONAL NUM ON R.IID_EMPLEADO = NUM.IID_EMPLEADO
+                                        INNER JOIN RH_FALTAS_CAT RC ON R.ID_TIPO_FALTA = RC.ID_TIPO_FALTA
+                                        INNER JOIN NO_CONTRATO RCUN ON RCUN.IID_EMPLEADO = NUM.IID_EMPLEADO AND RCUN.IID_CONTRATO = NUM.IID_CONTRATO
+                                        INNER JOIN RH_CAT_AREAS RCAN ON RCUN.IID_AREA = RCAN.IID_AREA AND RCUN.IID_DEPTO = RCAN.IID_DEPTO
+                                        WHERE trunc(R.D_FEC_INICIO) <= trunc($fecha_sql)
+                                            AND trunc(R.D_FEC_FIN) >= trunc($fecha_sql)
+                                            AND NUM.IID_EMPLEADO  NOT IN (209, 1025) 
+                                            AND NUM.S_STATUS = 1 AND NUM.IID_PLAZA = PL.IID_PLAZA AND R.ID_TIPO_FALTA IN (9)) AS VACACIONES,     
+                        COUNT(A.formatted_punch_time) AS ASISTENCIA,
+                        (SELECT COUNT(*) FROM RH_SOL_RECLUTA_SEL RSEL WHERE RSEL.IID_PLAZA_ASIGNA = PL.IID_PLAZA AND RSEL.N_STATUS <= 2 AND (RSEL.N_STANDBYE <> 1 OR RSEL.N_STANDBYE IS NULL) ) AS VACANTES,
+                        (SELECT COUNT(*) FROM RH_SOL_RECLUTA_SEL RSEL WHERE RSEL.IID_PLAZA_ASIGNA = PL.IID_PLAZA AND RSEL.N_STATUS <= 2 AND RSEL.N_STANDBYE = 1 ) AS VACANTES_STANDBY,
+                        (SELECT COUNT(*)
+                        FROM (SELECT NP.*, TO_NUMBER(B.EMP_CODE)
+                                FROM NO_PERSONAL NP
+                                LEFT JOIN ICLOCK_TRANSACTION@DLRELOJ B ON NP.IID_EMPLEADO =
+                                                                            B.EMP_CODE
+                                                                        AND TO_CHAR(punch_time, 'DD/MM/YYYY') = TO_CHAR($fecha_sql, 'DD/MM/YYYY')
+                                                                        INNER JOIN RH_ALMACEN_EMP REMP ON REMP.NID_EMPLEADO = NP.IID_EMPLEADO AND REMP.N_BASE = 1 AND REMP.I_CHECA_RELOJ <> 1 AND REMP.NID_ALMACEN NOT IN (1468, 1562, 43, 1706, 1770, 1773, 1136, 1705, 1554, 1775, 1755, 1387)
+                                LEFT JOIN RH_FALTAS RF ON RF.IID_EMPLEADO = NP.IID_EMPLEADO AND RF.ID_TIPO_FALTA <> 6 AND (trunc(RF.d_fec_inicio) <= trunc($fecha_sql) AND trunc(RF.d_fec_fin) >= TRUNC($fecha_sql))
+                                WHERE NP.S_STATUS = 1
+                                    AND NP.IID_EMPLEADO  NOT IN (209, 1025) 
+                                AND B.EMP_CODE IS NULL
+                                AND NP.IID_PLAZA = PL.IID_PLAZA
+                                AND NP.IID_NUMNOMINA IS NOT NULL
+                                AND RF.IID_EMPLEADO IS NULL 
+                                UNION ALL
+                                SELECT NP.*, NP.IID_EMPLEADO
+                                FROM NO_PERSONAL NP
+                                INNER JOIN RH_FALTAS RF ON RF.IID_EMPLEADO = NP.IID_EMPLEADO
+                                WHERE RF.ID_TIPO_FALTA = 6
+                                    AND NP.IID_EMPLEADO  NOT IN (209, 1025) 
+                                    AND NP.IID_NUMNOMINA IS NOT NULL
+                                AND NP.IID_PLAZA = PL.IID_PLAZA
+                                AND (trunc(RF.d_fec_inicio) <= trunc($fecha_sql) AND
+                                        trunc(RF.d_fec_fin) >= TRUNC($fecha_sql))) X) AS FALTAS_SIN_JUSTIFICACION 
+                FROM (select * from (SELECT TO_NUMBER(emp_code) AS EMP_CODE,
+                                                        TO_CHAR(punch_time, 'DD/MM/YYYY HH24:MI:SS') AS formatted_punch_time,
+                                                        TO_CHAR(punch_time, 'DD/MM/YYYY') AS formatted_punch_time2
+                                                FROM (SELECT emp_code,
+                                                                punch_time,
+                                                                ROW_NUMBER() OVER(PARTITION BY emp_code, TRUNC(punch_time) ORDER BY punch_time ASC) as rn
+                                                        FROM ICLOCK_TRANSACTION@DLRELOJ)
+                                                WHERE rn = 1
+                                                ORDER BY punch_time DESC) b
+                                        where b.formatted_punch_time2 = TO_CHAR(SYSDATE, 'DD/MM/YYYY')) A
+                                RIGHT JOIN NO_PERSONAL NP ON A.EMP_CODE = NP.IID_EMPLEADO
+                                INNER JOIN NO_CONTRATO NOMC ON NOMC.IID_CONTRATO = NP.IID_CONTRATO AND NOMC.IID_EMPLEADO = NP.IID_EMPLEADO
+                                INNER JOIN RH_PUESTOS RP ON NOMC.IID_PUESTO = RP.IID_PUESTO
+                                INNER JOIN RH_CAT_AREAS RA ON NOMC.IID_AREA = RA.IID_AREA
+                                                            AND RA.IID_DEPTO = NOMC.IID_DEPTO
+                                INNER JOIN PLAZA PL ON NP.IID_PLAZA = PL.IID_PLAZA
+                                INNER JOIN RH_CAT_DEPTO RCD ON RCD.IID_DEPTO = RA.IID_DEPTO                                        
+                                LEFT  JOIN RH_ALMACEN_EMP ALMEMP ON ALMEMP.NID_EMPLEADO = NOMC.IID_EMPLEADO AND ALMEMP.N_BASE =1 
+                                LEFT JOIN ALMACEN AL ON ALMEMP.NID_ALMACEN = AL.IID_ALMACEN
+                WHERE NP.S_STATUS = 1  AND NP.IID_EMPLEADO  NOT IN (209, 1025)  ".$in_plaza."
+                GROUP BY PL.V_RAZON_SOCIAL, PL.IID_PLAZA        
+                ORDER BY PL.IID_PLAZA";
 
             #echo $sql;
             $stid = oci_parse($conn, $sql);
@@ -592,7 +783,8 @@ ORDER BY PL.IID_PLAZA";
             exit;
     }
 
-    public function obtenerVacantes($iid_plaza){
+    public function obtenerVacantes($iid_plaza, $fecha = null, $fechaInicio = null, $fechaFin = null){
+
         $conn = conexion::conectar();
         $res_array = array();
 
@@ -618,4 +810,5 @@ ORDER BY PL.IID_PLAZA";
         exit;
     }
 }
+
 ?>
