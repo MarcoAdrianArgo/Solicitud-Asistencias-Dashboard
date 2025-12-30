@@ -250,7 +250,62 @@ if ($modulos_valida == 0) {
     <!-- ############################ ./SECCION GRAFICA Y WIDGETS ############################# -->
     <section class="content">
 
+<!--  filtros         -->
+     <div class="row">
+    <div class="col-md-12">
+        <div class="box box-primary">
+            <div class="box-header with-border">
+                <h3 class="box-title"><i class="fa fa-filter"></i> Filtros de Fecha</h3>
+            </div>
+            <div class="box-body">
+                <div class="row">
+                    <div class="col-md-3">
+                        <div class="form-group">
+                            <label>Tipo de Filtro:</label>
+                            <select id="tipoFiltro" class="form-control">
+                                <option value="dia">Por Día</option>
+                                <option value="semana">Por Semana</option>
+                                <option value="mes">Por Mes</option>
+                            </select>
+                        </div>
+                    </div>
+                    
+                    <div class="col-md-3" id="filtroDia">
+                        <div class="form-group">
+                            <label>Seleccionar Día:</label>
+                            <input type="date" id="fechaDia" class="form-control" value="<?php echo date('Y-m-d'); ?>">
+                        </div>
+                    </div>
+                    
+                    <div class="col-md-3" id="filtroSemana" style="display: none;">
+                        <div class="form-group">
+                            <label>Seleccionar Semana:</label>
+                            <input type="week" id="fechaSemana" class="form-control" value="<?php echo date('Y-\WW'); ?>">
+                        </div>
+                    </div>
+                    
+                    <div class="col-md-3" id="filtroMes" style="display: none;">
+                        <div class="form-group">
+                            <label>Seleccionar Mes:</label>
+                            <input type="month" id="fechaMes" class="form-control" value="<?php echo date('Y-m'); ?>">
+                        </div>
+                    </div>
+                    
+                    <div class="col-md-3">
+                        <div class="form-group">
+                            <label>&nbsp;</label>
+                            <button id="btnAplicarFiltro" class="btn btn-primary btn-block">
+                                <i class="fa fa-filter"></i> Aplicar Filtro
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
 
+    <!--  Fin filtros -->
 
         <div id="loaderTabla" style="display: none;"></div>
 
@@ -452,11 +507,18 @@ if ($modulos_valida == 0) {
                                 <th class="small" bgcolor="#0073B7">
                                     <font color="white">ASISTENCIA
                                 </th>
+                                <th class="small" bgcolor="#0073B7">
+                                    <font color="white">ULTIMO REGISTRO
+                                </th>
                                 
                                 <!--<th class="small" bgcolor="#0073B7"><font color="white">HORA DE LLEGADA</th>-->
                                 <th class="small" bgcolor="#0073B7">
                                     <font color="white">MOTIVO DE FALTA
                                 </th>
+                                <th class="small" bgcolor="#0073B7">
+                                    <font color="white">FECHA
+                                </th>
+
 
                             </tr>
                         </thead>
@@ -511,11 +573,17 @@ if ($modulos_valida == 0) {
 <!-- ################################### Termina Contenido de la pagina ################################### -->
 <?php include_once('../layouts/footer.php'); ?>
 
+
+
 <script>
     var textoPorcentajeWid = document.getElementById('porcentajeWidget');
     var porcentajeNum = document.getElementById('porcentajeNumero');
     var tituloPorcentaje = document.getElementById('tituloPorcentaje');
     var contadorClics = 0;
+    var fechaInicioStr = null;
+    var fechaFinStr = null;
+
+
 
     textoPorcentajeWid.addEventListener('click', function() {
         contadorClics++;
@@ -616,51 +684,262 @@ if ($modulos_valida == 0) {
 
 </script>
 
+<!-- script para filtros -->
+
 <script>
+   
+    var diaSeleccionado = '<?php echo date('Y-m-d'); ?>';
     
-    var ultimaFilaSeleccionada;
-
-    function cargarDatos(iidPlaza) {
-
-        // Personaliza el diseño del overlay
-        $.LoadingOverlaySetup({
-            image: "", // Puedes usar una URL para un GIF personalizado
-            fontawesome: "fa fa-spinner fa-spin", // Icono de carga (FontAwesome)
-            text: "Cargando datos...", // Texto de carga
-            textFontColor: "#ffffff", // Color del texto
-            textFontSize: "14px", // Tamaño del texto
-            textPosition: "center", // Posición del texto (center, top, bottom)
-            background: "rgba(0, 0, 0, 0.8)", // Fondo del overlay
-            zIndex: 1000, // Índice z del overlay
-        });
-
-        $("#asistenciaPersonal").LoadingOverlay("show");
-
-        $.ajax({
-            url: '../class/AsistenciaPersonal.php',
-            method: 'POST',
-            data: {
-                accion: 'cargarDatos',
-                clase: 'AsistenciaPersonal', // Reemplaza con el nombre de tu clase
-                metodo: 'obtenerAsistencia', // Reemplaza con el nombre de tu función dentro de la clase
-                iidPlaza: iidPlaza // Enviar el valor de iidPlaza como parte de los datos
-            },
-            success: function(response) {
-                //En caso de que tenga alguna cookie de iid_plaza hacer esto
-                console.log(response);
-                construirTabla(response);
-                calcularPorcentaje(response);
-            },
-            error: function(jqXHR, textStatus, errorThrown) {
-                console.error('Error en la solicitud AJAX:', textStatus, errorThrown);
-                console.log(jqXHR.responseText); // Esto imprimirá el cuerpo de la respuesta del servidor
-            },
-            complete: function() {
-                // Ocultar el GIF de carga después de que se haya completado la solicitud AJAX
-                $("#asistenciaPersonal").LoadingOverlay("hide");
+    // Inicializar el filtro de fecha con el día de hoy
+    $(document).ready(function() {
+        // Permitir cambiar entre opciones (NO deshabilitar)
+        $('#tipoFiltro').prop('disabled', false);
+        
+        // Establecer valor inicial
+        $('#tipoFiltro').val('dia');
+        $('#filtroSemana').hide();
+        $('#filtroMes').hide();
+        $('#filtroDia').show();
+        
+        // Establecer la fecha de hoy por defecto
+        $('#fechaDia').val('<?php echo date("Y-m-d"); ?>');
+        
+        // Guardar el día inicial en la variable
+        diaSeleccionadoFiltro = $('#fechaDia').val();
+        console.log('Día inicial:', diaSeleccionadoFiltro);
+        
+        // Agregar evento al cambio del tipo de filtro (SOLO VISUAL)
+        $('#tipoFiltro').change(function() {
+            var tipo = $(this).val();
+            console.log('Cambiando a filtro:', tipo);
+            
+            // Ocultar todos los filtros
+            $('#filtroDia').hide();
+            $('#filtroSemana').hide();
+            $('#filtroMes').hide();
+            
+            // Mostrar solo el filtro correspondiente
+            switch(tipo) {
+                case 'dia':
+                    $('#filtroDia').show();
+                    break;
+                case 'semana':
+                    $('#filtroSemana').show();
+                    break;
+                case 'mes':
+                    $('#filtroMes').show();
+                    break;
             }
         });
+    });
+
+
+    $('#btnAplicarFiltro').click(function() {
+        var tipoFiltro = $('#tipoFiltro').val();
+        
+        if (tipoFiltro === 'dia' ) {
+            // FUNCIONALIDAD ORIGINAL PARA DÍA
+            var fechaSeleccionada = $('#fechaDia').val();
+            console.log('Filtro aplicado para día:', fechaSeleccionada);
+            fechaInicioStr = null;
+            fechaFinStr = null;
+            // Actualizar título de las tablas para mostrar la fecha
+            var nombrePlaza = obtenerCookie('v_razon_social');
+            if (nombrePlaza) {
+                var fechaFormateada = new Date(fechaSeleccionada).toLocaleDateString('es-ES');
+                $('#asistenciaPlazasTabla').html("ASISTENCIA DE PERSONAL DE PLAZA " + nombrePlaza );
+                $('#vacantesPlazaTabla').html("VACANTES DE PERSONAL DE PLAZA " + nombrePlaza );
+            }
+            cargarTablaGeneral(); 
+            aplicarFiltroDia();
+        } else if (tipoFiltro === 'semana') {
+
+        var semanaSeleccionada = $('#fechaSemana').val(); 
+        var partes = semanaSeleccionada.split('-W');
+
+        var año = parseInt(partes[0]);
+        var semana = parseInt(partes[1]);
+
+        
+        var fechaBase = new Date(año, 0, 4);
+
+        
+        var diaSemana = fechaBase.getDay() || 7; 
+        var lunesSemana1 = new Date(fechaBase);
+        lunesSemana1.setDate(fechaBase.getDate() - diaSemana + 1);
+
+        
+        var inicioSemana = new Date(lunesSemana1);
+        inicioSemana.setDate(lunesSemana1.getDate() + (semana - 1) * 7);
+
+        
+        var finSemana = new Date(inicioSemana);
+        finSemana.setDate(inicioSemana.getDate() + 5);
+
+        var formatoFecha = { day: '2-digit', month: '2-digit', year: 'numeric' };
+        fechaInicioStr = inicioSemana.toLocaleDateString('es-ES', formatoFecha);
+        fechaFinStr = finSemana.toLocaleDateString('es-ES', formatoFecha);
+
+        aplicarFiltroDia();
+        } else if (tipoFiltro === 'mes') {
+
+            var mesSeleccionado = $('#fechaMes').val();
+
+            if (!mesSeleccionado) {
+                alert('Selecciona un mes');
+                return;
+            }
+
+            // Separar año y mes
+            var partes = mesSeleccionado.split('-');
+            var anio = parseInt(partes[0], 10);
+            var mes = parseInt(partes[1], 10) - 1; // JS empieza en 0
+
+            // Fechas reales
+            var inicioMes = new Date(anio, mes, 1);
+            var finMes = new Date(anio, mes + 1, 0);
+
+            // Formato español
+             fechaInicioStr = inicioMes.toLocaleDateString('es-MX');
+             fechaFinStr = finMes.toLocaleDateString('es-MX');
+            aplicarFiltroDia();
+      
+        }
+
+    });
+
+    // Agregar evento de click a las celdas de la tabla general
+    $(document).on('click', '#miTablaGeneral tbody td', function() {
+        var table = $('#miTablaGeneral').DataTable();
+        var rowData = table.row($(this).closest('tr')).data(); 
+        
+        if (rowData) {    
+            var plazaId = rowData.IID_PLAZA || 'N/A'; 
+            var plazaNombre = rowData.V_RAZON_SOCIAL || 'N/A'; // Asegúrate de que este campo existe
+        
+            document.cookie = "iid_plaza=" + plazaId + "; path=/";
+            document.cookie = "v_razon_social=" + encodeURIComponent(plazaNombre) + "; path=/";
+     
+            var fechaActual = $('#fechaDia').val();
+            var fechaTitulo = '';
+            
+            if (fechaActual) {
+                var partes = fechaActual.split('-');
+                fechaTitulo = ' - ' + partes[2] + '/' + partes[1] + '/' + partes[0];
+            }
+           
+            $('#asistenciaPersonal').show();
+            $('#vacantesPersonal').show();
+        
+            cargarDatos(parseInt(plazaId));
+            obtenerVacantes(parseInt(plazaId));
+            
+            console.log(' Datos recargados para plaza:', plazaNombre);
+        }
+    });
+
+    function aplicarFiltroDia() {
+        // Obtener el valor de la cookie 'iid_plaza'
+        var iidPlaza = obtenerCookie('iid_plaza');
+        var fechaSeleccionada = $('#fechaDia').val();
+        
+        if (iidPlaza) {
+            console.log('Aplicando filtro - Plaza:', iidPlaza, 'Fecha:', fechaSeleccionada);
+            cargarDatos(iidPlaza); // Esto ahora enviará la fecha seleccionada
+        } else {
+            alert('Primero selecciona una plaza de la tabla general');
+        }
     }
+    
+    // Función auxiliar para obtener cookies
+    function obtenerCookie(nombre) {
+        var nombreEQ = nombre + "=";
+        var cookies = document.cookie.split(';');
+        for(var i = 0; i < cookies.length; i++) {
+            var cookie = cookies[i];
+            while (cookie.charAt(0) == ' ') {
+                cookie = cookie.substring(1, cookie.length);
+            }
+            if (cookie.indexOf(nombreEQ) == 0) {
+                return decodeURIComponent(cookie.substring(nombreEQ.length, cookie.length));
+            }
+        }
+        return null;
+    }
+
+
+   
+var ultimaFilaSeleccionada;
+
+function cargarDatos(iidPlaza) {
+    
+
+    var fechaSeleccionada = $('#fechaDia').val(); // Obtener la fecha seleccionada del input
+
+    if (fechaInicioStr !== null && fechaFinStr !== null) {
+        fechaSeleccionada = null; // Anular la fecha si se usan rangos
+          if (fechaInicioStr) {
+            var partes = fechaInicioStr.split('/');
+            fechaInicioStr = partes[2] + '-' + partes[1] + '-' + partes[0];
+        }
+        
+        // Convertir fechaFinStr de dd/mm/yyyy a yyyy-mm-dd
+        if (fechaFinStr) {
+            var partes = fechaFinStr.split('/');
+            fechaFinStr = partes[2] + '-' + partes[1] + '-' + partes[0];
+        }
+        alert("----- esto es un debug----- fecha inicio:" + fechaInicioStr + " fecha fin: " + fechaFinStr);
+        alert("----- Se ah borrado fecha de filtro diario: ----------" + fechaSeleccionada);
+    }
+
+
+
+    $.LoadingOverlaySetup({
+        image: "", // Puedes usar una URL para un GIF personalizado
+        fontawesome: "fa fa-spinner fa-spin", // Icono de carga (FontAwesome)
+        text: "Cargando datos...", // Texto de carga
+        textFontColor: "#ffffff", // Color del texto
+        textFontSize: "14px", // Tamaño del texto
+        textPosition: "center", // Posición del texto (center, top, bottom)
+        background: "rgba(0, 0, 0, 0.8)", // Fondo del overlay
+        zIndex: 1000, // Índice z del overlay
+    });
+
+    $("#asistenciaPersonal").LoadingOverlay("show");
+
+    console.log('Enviando datos al backend:');
+    console.log('  - iidPlaza:', iidPlaza);
+    console.log('  - fecha:', fechaSeleccionada);
+    //bandera3
+    $.ajax({
+        url: '../class/AsistenciaPersonal.php',
+        method: 'POST',
+        data: {
+            accion: 'cargarDatos',
+            clase: 'AsistenciaPersonal',
+            metodo: 'obtenerAsistencia',
+            iidPlaza: iidPlaza,
+            fecha: fechaSeleccionada,
+            fechaInicio: fechaInicioStr,
+            fechaFin: fechaFinStr,
+          
+        },
+        success: function(response) {
+            console.log('Respuesta recibida:', response);
+            construirTabla(response);
+            calcularPorcentaje(response);
+        },
+        error: function(jqXHR, textStatus, errorThrown) {
+            console.error('Error en la solicitud AJAX:', textStatus, errorThrown);
+            console.log('Respuesta del servidor:', jqXHR.responseText);
+        },
+        complete: function() {
+            $("#asistenciaPersonal").LoadingOverlay("hide");
+        }
+    });
+
+    //agregar otro $.ajax para reporte general
+}
 
     function obtenerHoraMinutosSegundos(cadenaFechaHora) {
         if (cadenaFechaHora) {
@@ -692,7 +971,9 @@ if ($modulos_valida == 0) {
         if ($.fn.DataTable.isDataTable('#miTabla')) {
             $('#miTabla').DataTable().clear().destroy();
         }
-
+        
+        var esRango = (fechaInicioStr !== null && fechaFinStr !== null);
+  
         // Construir la tabla utilizando DataTables con botones de exportación e impresión
         var table = $('#miTabla').DataTable({
             data: data,
@@ -713,15 +994,20 @@ if ($modulos_valida == 0) {
                 },
                 {
                     data: 'NOMBREALMA',
-                    render: function(data, type, row) {
+                        render: function(data, type, row) {
                         // Si el tipo de renderizado es para mostrar en la tabla
                         if (type === 'display') {
-                            // Reemplazar 'NOMBREALMA' con una cadena vacía
-                            return data.replace('NOMBREALMA', '');
+                            // Validar que data no sea null o undefined
+                            if (data && typeof data === 'string') {
+                                // Reemplazar 'NOMBREALMA' con una cadena vacía
+                                return data.replace('NOMBREALMA', '');
+                            } else {
+                                return ''; // o 'N/A' o cualquier valor por defecto
+                            }
                         }
                         // Si el tipo de renderizado es para ordenamiento, búsqueda, etc., devolver el dato original
-                        return data;
-                    }
+                        return data || '';
+                 }
                 },
                 {
                     data: 'LLEGO_TIEMPO',
@@ -736,7 +1022,17 @@ if ($modulos_valida == 0) {
                             return '<i class="fa '+faltaCheck+'" style="color: ' + faltaColor + '; font-size: 24px;"><span class="hidden">FALTA</span></i>';                           
                         }
                     }
-                },
+                }, { 
+                data: 'HORA_SALIDA',
+                render: function(data, type, row) {
+                    // Solo mostrar HORA_SALIDA si el empleado asistió (LLEGO_TIEMPO === 'PRESENTE')
+                    if (row.LLEGO_TIEMPO === 'PRESENTE' && data) {
+                        return data;
+                    } else {
+                        return '';
+                    }
+                }
+            },          
                 //{ data: 'TIEMPO', render: function(data) { return obtenerHoraMinutosSegundos(data); } },
                 {
                     data: 'FALTA',
@@ -749,6 +1045,20 @@ if ($modulos_valida == 0) {
                         }
                                     
                 }
+                },
+                {
+                    data: 'FECHA',
+                    render: function(data, type, row) {
+                        if (data){
+                            var partes = data.split('-');
+                            if (partes.length === 3) {
+                                return partes[2] + '/' + partes[1] + '/' + partes[0];
+                            } else {
+                                return data; // Devuelve el dato original si no tiene el formato esperado
+                            }
+                        }
+                        return "";
+                    }
                 }
 
             ],
@@ -819,6 +1129,10 @@ if ($modulos_valida == 0) {
                             return val;
                         });
 
+                        // console.log('Total Empleados en grupo ' + totalEmpleados);
+                        // console.log('Total Asistencias en grupo ' + tota_Faltas);
+                        // alert('Total Empleados en grupo ' + totalEmpleados);
+                        // alert('Total Asistencias en grupo ' + tota_Faltas);
 
                     var totalChecks = Number(totalEmpleados) - Number(tota_Faltas) ;    
 
@@ -836,7 +1150,7 @@ if ($modulos_valida == 0) {
                     }
                     // Renderizar la fila de grupo con los cálculos
                     return $('<tr/>')
-                        .append('<td colspan="8" style="text-align:center; color:' + textColor + '; background-color: ' + bgColor + ';">' +
+                        .append('<td colspan="10" style="text-align:center; color:' + textColor + '; background-color: ' + bgColor + ';">' +
                             textValor +
                             '</td>')
                         .attr('data-name', group)
@@ -867,17 +1181,41 @@ if ($modulos_valida == 0) {
 
     }
 
-    // Función para exportar la tabla a Excel
+    
 
 
-    function calcularPorcentaje(data) {
-        // Filtrar los registros donde LLEGO_TIEMPO es igual a "PRESENTE"
-        var presentes = data.filter(function(registro) {
-            return registro.LLEGO_TIEMPO === "PRESENTE";
-        });
+    function calcularPorcentaje(data/*, $fecha, $fechaInicio, $fechaFin*/) {
 
-        // Calcular el porcentaje
-        var porcentaje = (presentes.length / data.length) * 100;
+            //console.log(data)
+            //calcular porcentaje de asistencia por filtro de fecha
+            // if ($fecha){
+            //     // Filtrar los registros donde LLEGO_TIEMPO es igual a "PRESENTE"
+            //     var presentes = data.filter(function(registro) {
+            //     return registro.LLEGO_TIEMPO === "PRESENTE";
+            // });
+
+            // // Calcular el porcentaje
+            // var porcentaje = (presentes.length / data.length) * 100;           
+
+            // }
+            // //calcular porcentaje por rango de fechas
+            // else if($fechaInicio && $fechaFin){
+                
+            // }else{
+                // alert("no se puso calcular el porcentaje");
+                
+            // Filtrar los registros donde LLEGO_TIEMPO es igual a "PRESENTE"
+            var presentes = data.filter(function(registro) {
+                return registro.LLEGO_TIEMPO === "PRESENTE";
+            });
+
+            // Calcular el porcentaje
+            var porcentaje = (presentes.length / data.length) * 100;      
+            // }
+
+
+
+ 
     }
 
     function obtenerVacantes(iidPlaza) {
@@ -903,7 +1241,10 @@ if ($modulos_valida == 0) {
                 accion: 'cargarDatos',
                 clase: 'AsistenciaPersonal', // Reemplaza con el nombre de tu clase
                 metodo: 'obtenerVacantes', // Reemplaza con el nombre de tu función dentro de la clase
-                iidPlaza: iidPlaza // Enviar el valor de iidPlaza como parte de los datos
+                iidPlaza: iidPlaza, // Enviar el valor de iidPlaza como parte de los datos
+                fecha: $('#fechaDia').val(),
+                fechaInicio: null,
+                fechaFin: null,
             },
             success: function(response) {
                 //console.log(response);
@@ -985,18 +1326,18 @@ if ($modulos_valida == 0) {
 
     function cargarTablaGeneral() {
         //Validamos para agregar animacion a primera carga. 
-
+        var fechaFiltro = $('#fechaDia').val();
         $("#contenidoReporteGral").LoadingOverlay("show");
 
-
+//bandera
         $.ajax({
             url: '../class/AsistenciaPersonal.php',
             method: 'POST',
             data: {
                 accion: 'cargarDatos',
                 clase: 'AsistenciaPersonal', // Reemplaza con el nombre de tu clase
-                metodo: 'obtenerReporteGeneral'
-
+                metodo: 'obtenerReporteGeneral',
+                fecha: fechaFiltro // Enviar la fecha seleccionada
             },
             success: function(response) {
                 console.log(response);
@@ -1227,8 +1568,7 @@ if ($modulos_valida == 0) {
                 // Ocultar nuevamente la columna IID_PLAZA
                 table.column(0).visible(false);
 
-                // Mostrar un alert con la información de la fila seleccionada, incluyendo IID_PLAZA
-                //alert('Fila seleccionada:\nIID_PLAZA: ' +  + '\nV_RAZON_SOCIAL: ' + selectedData.V_RAZON_SOCIAL);
+                
                 document.cookie = 'iid_plaza=' + selectedData.IID_PLAZA + "; path=/;";
                 document.cookie = 'v_razon_social=' + selectedData.V_RAZON_SOCIAL+ "; path=/;";
 
@@ -1304,6 +1644,7 @@ if ($modulos_valida == 0) {
             // Llamar a la función cargarDatos con el valor de la cookie
             console.log('La cookie "iid_plaza" está presente.' + iidPlazaCookie);
             //Cargar la general primero 
+
 
             cargarDatos(parseInt(iidPlazaCookie));
 
